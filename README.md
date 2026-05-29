@@ -1,12 +1,12 @@
-# ACM Health Check Tool (Python Version)
+# RHACM Health Check Tool (Python Version)
 
-Python conversion of the ACM must-gather analysis bash script using the omc-python library.
+Python conversion of the [Red Hat Advanced Cluster Management (RHACM)](https://docs.redhat.com/en/documentation/red_hat_advanced_cluster_management_for_kubernetes/) must-gather analysis bash script using the omc-python library.
 
 ## Overview
 
-This tool analyzes Red Hat Advanced Cluster Management (ACM) must-gather archives and provides:
+This tool analyzes Red Hat Advanced Cluster Management (RHACM) must-gather archives and provides:
 - Cluster health information
-- Component status (ACM, MCE, OCP)
+- Component status (RHACM, MCE, OCP)
 - Pod health and error detection
 - Configuration validation
 
@@ -55,14 +55,14 @@ chmod +x acm_healthcheck.py
 Override auto-detection and force the must-gather type:
 
 ```bash
-# Force ACM must-gather analysis
+# Force RHACM must-gather analysis
 ./acm_healthcheck.py -t ACM /path/to/must-gather
 
 # Force OCP must-gather analysis
 ./acm_healthcheck.py -t OCP /path/to/must-gather
 ```
 
-This is useful when auto-detection fails or when you want to analyze an OCP must-gather with ACM-specific checks disabled.
+This is useful when auto-detection fails or when you want to analyze an OCP must-gather with RHACM-specific checks disabled.
 
 ### Verbose Mode
 
@@ -76,7 +76,7 @@ Show detailed information about managed clusters (name, state, OCP version, comp
 
 In verbose mode, the tool will:
 - Display each managed cluster's name, availability state, and OCP version
-- Check OCP version compatibility against the installed ACM version
+- Check OCP version compatibility against the installed RHACM version
 - Warn about unsupported OCP versions with specific compatibility details
 
 ### Debug Mode
@@ -115,10 +115,10 @@ You can combine verbose and debug modes:
 
 ## What Gets Checked
 
-### For ACM Hub Clusters
+### For RHACM Hub Clusters
 
-- ✅ Must-gather type detection (ACM/OCP)
-- ✅ ACM/MCE version information
+- ✅ Must-gather type detection (RHACM/OCP)
+- ✅ RHACM/MCE version information
 - ✅ Environment type (Connected/Disconnected)
 - ✅ MCH (MultiClusterHub) health
   - Current vs Desired version
@@ -133,14 +133,14 @@ You can combine verbose and debug modes:
   - Platform (AWS, Azure, etc.)
   - Node counts
 - ✅ Managed clusters count
-- ✅ ACM namespace validation
-- ✅ Pod counts per ACM namespace
+- ✅ RHACM namespace validation
+- ✅ Pod counts per RHACM namespace
 - ✅ Addon pod status
 - ✅ Klusterlet pod status
 - ✅ Pods in error state
 - ✅ Pods with high restart counts (>10)
 
-### For ACM Managed Clusters
+### For RHACM Managed Clusters
 
 - ✅ Environment type
 - ✅ Addon status
@@ -161,9 +161,9 @@ You can combine verbose and debug modes:
 Collecting environment details using must-gather:
 must-gather.local.1234567890
 
-Must-Gather Image: ACM
+Must-Gather Image: RHACM
 Hub Cluster: Yes
-ACM Version: 2.7.0
+RHACM Version: 2.7.0
 MCE Version: 2.2.0
 
 Environment Type: Connected
