@@ -1,0 +1,3 @@
+[submodule "omc-python"]
+	path = omc-python
+	url = git@github.com:mheppler-rh/omc-python.git
