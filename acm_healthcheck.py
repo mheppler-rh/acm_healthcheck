@@ -358,7 +358,7 @@ class ACMHealthCheck:
 
     def check_mch_health(self):
         """Check MultiClusterHub health."""
-        mch_files = list(self.mg_path.rglob("multiclusterhubs/*.yaml"))
+        mch_files = [f for f in self.mg_path.rglob("multiclusterhubs/*.yaml") if not f.name.startswith('._')]
 
         if not mch_files:
             return
