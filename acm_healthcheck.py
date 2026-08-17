@@ -15,6 +15,7 @@ import sys
 import os
 import argparse
 import re
+import yaml
 from pathlib import Path
 from typing import Optional, Dict, List, Tuple
 from colorama import Fore, Style, init
@@ -33,7 +34,8 @@ from omc.utils import get_failing_pods
 # Based on Red Hat documentation: https://access.redhat.com/support/policy/updates/advanced-cluster-management
 # ACM supports: latest RHOCP + 2 previous versions + next upcoming version
 ACM_OCP_COMPATIBILITY = {
-    "2.16": ["4.19", "4.20", "4.21"],
+    "2.17": ["4.20", "4.21", "4.22"],
+    "2.16": ["4.19", "4.20", "4.21", "4.22"],
     "2.15": ["4.18", "4.19", "4.20", "4.21"],
     "2.14": ["4.17", "4.18", "4.19", "4.20"],
     "2.13": ["4.16", "4.17", "4.18", "4.19"],
@@ -318,10 +320,15 @@ class ACMHealthCheck:
             if self.cluster_resources:
                 cv_file = self.cluster_resources / "config.openshift.io" / "clusterversions.yaml"
                 if cv_file.exists():
-                    content = cv_file.read_text()
-                    match = re.search(r'Cluster version is (\S+)', content)
-                    if match:
-                        self.print_value("OCP Version", match.group(1))
+                    cv = self._load_yaml_resource(cv_file)
+                    if cv:
+                        version = cv.get('status', {}).get('desired', {}).get('version')
+                        if not version:
+                            history = cv.get('status', {}).get('history', [])
+                            if history:
+                                version = history[0].get('version')
+                        if version:
+                            self.print_value("OCP Version", version)
 
     def check_environment_type(self):
         """Check if connected or disconnected environment."""
@@ -341,10 +348,13 @@ class ACMHealthCheck:
         if self.cluster_resources:
             infra_file = self.cluster_resources / "config.openshift.io" / "infrastructures.yaml"
             if infra_file.exists():
-                content = infra_file.read_text()
-                match = re.search(r'platform:\s*(\S+)', content)
-                if match:
-                    self.print_value("Cluster Platform", match.group(1))
+                infra = self._load_yaml_resource(infra_file)
+                if infra:
+                    platform = infra.get('status', {}).get('platform')
+                    if not platform:
+                        platform = infra.get('status', {}).get('platformStatus', {}).get('type')
+                    if platform:
+                        self.print_value("Cluster Platform", platform)
 
     def check_mch_health(self):
         """Check MultiClusterHub health."""
@@ -354,18 +364,15 @@ class ACMHealthCheck:
             return
 
         mch_file = mch_files[0]
-        content = mch_file.read_text()
+        data = yaml.safe_load(mch_file.read_text())
 
-        # Extract versions
-        current_match = re.search(r'^\s+currentVersion:\s*(\S+)', content, re.MULTILINE)
-        desired_match = re.search(r'^\s+desiredVersion:\s*(\S+)', content, re.MULTILINE)
-        phase_match = re.search(r'^\s+phase:\s*(\S+)', content, re.MULTILINE)
-        backup_match = re.search(r'^\s+enableClusterBackup:\s*(\S+)', content, re.MULTILINE)
+        status = data.get('status', {}) if data else {}
+        spec = data.get('spec', {}) if data else {}
 
-        current = current_match.group(1) if current_match else "Unknown"
-        desired = desired_match.group(1) if desired_match else "Unknown"
-        phase = phase_match.group(1) if phase_match else "Unknown"
-        backup = backup_match.group(1) if backup_match else "false"
+        current = str(status.get('currentVersion', 'Unknown'))
+        desired = str(status.get('desiredVersion', 'Unknown'))
+        phase = str(status.get('phase', 'Unknown'))
+        backup = str(spec.get('enableClusterBackup', False)).lower()
 
         self.print_header("MCH Health:")
 
@@ -388,6 +395,29 @@ class ACMHealthCheck:
             print(f"{Style.BRIGHT}{Fore.RED}    Warning!! Disable backup before upgrading to ACM 2.5")
 
         print()
+
+    def _load_yaml_resource(self, filepath: Path):
+        """Load a must-gather YAML file, handling both List and single-resource formats."""
+        data = yaml.safe_load(filepath.read_text())
+        if not data:
+            return None
+        if data.get('kind') == 'List':
+            items = data.get('items', [])
+            return items[0] if items else None
+        return data
+
+    def _count_key_occurrences(self, data, key: str) -> int:
+        """Count how many times a key appears in a nested dict/list structure."""
+        count = 0
+        if isinstance(data, dict):
+            if key in data:
+                count += 1
+            for v in data.values():
+                count += self._count_key_occurrences(v, key)
+        elif isinstance(data, list):
+            for item in data:
+                count += self._count_key_occurrences(item, key)
+        return count
 
     def _version_compare(self, v1: str, v2: str) -> int:
         """Compare versions. Returns -1 if v1 < v2, 0 if equal, 1 if v1 > v2."""
@@ -520,31 +550,43 @@ class ACMHealthCheck:
             return
 
         mc_file = mc_files[0]
-        content = mc_file.read_text()
+        mc = yaml.safe_load(mc_file.read_text()) or {}
 
-        # Extract details
-        url_match = re.search(r'url: https://api\.([^.]+)\.', content)
-        cluster_id_match = re.search(r'clusterID:\s*(\S+)', content)
-        ocp_version_match = re.search(r'openshiftVersion:\s*"?([^"\s]+)"?', content)
+        # Extract cluster name from API URL
+        hub_name = "Unknown"
+        client_configs = mc.get('spec', {}).get('managedClusterClientConfigs', [])
+        if client_configs:
+            api_url = client_configs[0].get('url', '')
+            url_match = re.search(r'https://api\.([^.]+)\.', api_url)
+            if url_match:
+                hub_name = url_match.group(1)
 
-        hub_name = url_match.group(1) if url_match else "Unknown"
-        cluster_id = cluster_id_match.group(1) if cluster_id_match else "Unknown"
-        ocp_version = ocp_version_match.group(1) if ocp_version_match else "Unknown"
+        # Extract clusterID and openshiftVersion from labels
+        labels = mc.get('metadata', {}).get('labels', {})
+        cluster_id = str(labels.get('clusterID', 'Unknown'))
+        ocp_version = str(labels.get('openshiftVersion', 'Unknown'))
+
+        # Fallback to clusterClaims if labels didn't have the version
+        if ocp_version == 'Unknown':
+            for claim in mc.get('status', {}).get('clusterClaims', []):
+                if claim.get('name') == 'version.openshift.io':
+                    ocp_version = claim.get('value', 'Unknown')
+                    break
 
         # Get more details from managedclusterinfo
         mci_files = list(self.mg_path.rglob("*/namespaces/local-cluster/*/managedclusterinfos/local-cluster.yaml"))
 
         if mci_files:
-            mci_content = mci_files[0].read_text()
-            desired_match = re.search(r'desiredVersion:\s*(\S+)', mci_content)
-            cloud_match = re.search(r'cloudVendor:\s*(\S+)', mci_content)
+            mci = yaml.safe_load(mci_files[0].read_text()) or {}
+            mci_status = mci.get('status', {})
 
-            desired_version = desired_match.group(1) if desired_match else "Unknown"
-            cloud_vendor = cloud_match.group(1) if cloud_match else "Unknown"
+            dist_info = mci_status.get('distributionInfo', {}).get('ocp', {})
+            desired_version = str(dist_info.get('desiredVersion', 'Unknown'))
+            cloud_vendor = str(mci_status.get('cloudVendor', 'Unknown'))
 
-            # Count nodes
-            master_count = content.count("node-role.kubernetes.io/master")
-            worker_count = content.count("node-role.kubernetes.io/worker")
+            # Count nodes by role from the managedcluster resource
+            master_count = self._count_key_occurrences(mc, "node-role.kubernetes.io/master")
+            worker_count = self._count_key_occurrences(mc, "node-role.kubernetes.io/worker")
 
             print(f"    Cluster Name: {Fore.CYAN}{hub_name}")
             print(f"    ClusterID: {Fore.CYAN}{cluster_id}")
@@ -588,7 +630,8 @@ class ACMHealthCheck:
 
                     # Get OCP version from clusterClaims
                     ocp_version = 'Unknown'
-                    cluster_claims = cluster.status.get('clusterClaims', [])
+                    status = cluster.status or {}
+                    cluster_claims = status.get('clusterClaims', [])
                     for claim in cluster_claims:
                         if claim.get('name') == 'version.openshift.io':
                             ocp_version = claim.get('value', 'Unknown')
@@ -614,7 +657,8 @@ class ACMHealthCheck:
                     name = cluster.name
 
                     # Get cluster status conditions
-                    conditions = cluster.status.get('conditions', [])
+                    status = cluster.status or {}
+                    conditions = status.get('conditions', [])
                     available = False
                     for condition in conditions:
                         if condition.get('type') == 'ManagedClusterConditionAvailable':
@@ -623,7 +667,7 @@ class ACMHealthCheck:
 
                     # Get OCP version from clusterClaims
                     ocp_version = 'Unknown'
-                    cluster_claims = cluster.status.get('clusterClaims', [])
+                    cluster_claims = status.get('clusterClaims', [])
                     for claim in cluster_claims:
                         if claim.get('name') == 'version.openshift.io':
                             ocp_version = claim.get('value', 'Unknown')
